@@ -5,23 +5,29 @@ namespace FunctionsAnalyzer.Gui;
 public sealed class MainForm : Form
 {
     private readonly TextBox _sourceFileTextBox = new();
-    private readonly TextBox _csvFileTextBox = new();
-    private readonly TextBox _functionNamesTextBox = new();
+    private readonly TextBox _excelFileTextBox = new();
+    private readonly TextBox _summaryFunctionNamesTextBox = new();
     private readonly TextBox _summaryCommentsTextBox = new();
+    private readonly TextBox _parameterFunctionNamesTextBox = new();
+    private readonly TextBox _parameterNamesTextBox = new();
     private readonly Label _statusLabel = new();
-    private readonly Button _copyFunctionNamesButton = new();
+    private readonly Button _copySummaryFunctionNamesButton = new();
     private readonly Button _copySummaryCommentsButton = new();
+    private readonly Button _copyParameterFunctionNamesButton = new();
+    private readonly Button _copyParameterNamesButton = new();
 
-    private IReadOnlyList<MethodSummary> _currentResults = Array.Empty<MethodSummary>();
+    private MethodAnalysisResult _currentResult = new(
+        Array.Empty<MethodSummary>(),
+        Array.Empty<MethodParameter>());
 
     public MainForm()
     {
         Text = "C# Functions Analyzer";
-        MinimumSize = new Size(860, 560);
+        MinimumSize = new Size(900, 600);
         StartPosition = FormStartPosition.CenterScreen;
 
         InitializeLayout();
-        UpdatePreview(Array.Empty<MethodSummary>());
+        UpdatePreview(new MethodAnalysisResult(Array.Empty<MethodSummary>(), Array.Empty<MethodParameter>()));
         SetStatus("解析対象の C# ファイルを選択してください。");
     }
 
@@ -40,7 +46,7 @@ public sealed class MainForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         root.Controls.Add(CreatePathPanel(), 0, 0);
-        root.Controls.Add(CreatePreviewPanel(), 0, 1);
+        root.Controls.Add(CreatePreviewTabs(), 0, 1);
         root.Controls.Add(CreateActionPanel(), 0, 2);
         root.Controls.Add(_statusLabel, 0, 3);
 
@@ -70,19 +76,19 @@ public sealed class MainForm : Form
         var browseSourceButton = CreateBrowseButton();
         browseSourceButton.Click += BrowseSourceButton_Click;
 
-        var csvLabel = CreatePathLabel("CSV出力先");
-        _csvFileTextBox.Dock = DockStyle.Top;
-        _csvFileTextBox.Margin = new Padding(0, 0, 8, 8);
+        var excelLabel = CreatePathLabel("Excel出力先");
+        _excelFileTextBox.Dock = DockStyle.Top;
+        _excelFileTextBox.Margin = new Padding(0, 0, 8, 8);
 
-        var browseCsvButton = CreateBrowseButton();
-        browseCsvButton.Click += BrowseCsvButton_Click;
+        var browseExcelButton = CreateBrowseButton();
+        browseExcelButton.Click += BrowseExcelButton_Click;
 
         panel.Controls.Add(sourceLabel, 0, 0);
         panel.Controls.Add(_sourceFileTextBox, 1, 0);
         panel.Controls.Add(browseSourceButton, 2, 0);
-        panel.Controls.Add(csvLabel, 0, 1);
-        panel.Controls.Add(_csvFileTextBox, 1, 1);
-        panel.Controls.Add(browseCsvButton, 2, 1);
+        panel.Controls.Add(excelLabel, 0, 1);
+        panel.Controls.Add(_excelFileTextBox, 1, 1);
+        panel.Controls.Add(browseExcelButton, 2, 1);
 
         return panel;
     }
@@ -108,28 +114,71 @@ public sealed class MainForm : Form
         };
     }
 
-    private Control CreatePreviewPanel()
+    private Control CreatePreviewTabs()
+    {
+        var tabs = new TabControl
+        {
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 8, 0, 8)
+        };
+
+        var summaryTab = new TabPage("Summary");
+        summaryTab.Controls.Add(CreateColumnPreviewPanel(
+            "関数名",
+            _summaryFunctionNamesTextBox,
+            _copySummaryFunctionNamesButton,
+            CopySummaryFunctionNamesButton_Click,
+            "Summaryコメント",
+            _summaryCommentsTextBox,
+            _copySummaryCommentsButton,
+            CopySummaryCommentsButton_Click));
+
+        var parametersTab = new TabPage("Parameters");
+        parametersTab.Controls.Add(CreateColumnPreviewPanel(
+            "関数名",
+            _parameterFunctionNamesTextBox,
+            _copyParameterFunctionNamesButton,
+            CopyParameterFunctionNamesButton_Click,
+            "仮引数名",
+            _parameterNamesTextBox,
+            _copyParameterNamesButton,
+            CopyParameterNamesButton_Click));
+
+        tabs.TabPages.Add(summaryTab);
+        tabs.TabPages.Add(parametersTab);
+        return tabs;
+    }
+
+    private static Control CreateColumnPreviewPanel(
+        string leftLabel,
+        TextBox leftTextBox,
+        Button leftCopyButton,
+        EventHandler leftCopyHandler,
+        string rightLabel,
+        TextBox rightTextBox,
+        Button rightCopyButton,
+        EventHandler rightCopyHandler)
     {
         var panel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
             RowCount = 2,
-            Margin = new Padding(0, 8, 0, 8)
+            Padding = new Padding(8)
         };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65));
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        panel.Controls.Add(CreatePreviewHeader("関数名", _copyFunctionNamesButton, CopyFunctionNamesButton_Click), 0, 0);
-        panel.Controls.Add(CreatePreviewHeader("Summaryコメント", _copySummaryCommentsButton, CopySummaryCommentsButton_Click), 1, 0);
+        panel.Controls.Add(CreatePreviewHeader(leftLabel, leftCopyButton, leftCopyHandler), 0, 0);
+        panel.Controls.Add(CreatePreviewHeader(rightLabel, rightCopyButton, rightCopyHandler), 1, 0);
 
-        ConfigurePreviewTextBox(_functionNamesTextBox);
-        ConfigurePreviewTextBox(_summaryCommentsTextBox);
+        ConfigurePreviewTextBox(leftTextBox);
+        ConfigurePreviewTextBox(rightTextBox);
 
-        panel.Controls.Add(_functionNamesTextBox, 0, 1);
-        panel.Controls.Add(_summaryCommentsTextBox, 1, 1);
+        panel.Controls.Add(leftTextBox, 0, 1);
+        panel.Controls.Add(rightTextBox, 1, 1);
 
         return panel;
     }
@@ -195,7 +244,7 @@ public sealed class MainForm : Form
 
         var exportButton = new Button
         {
-            Text = "CSV出力",
+            Text = "Excel出力",
             AutoSize = true
         };
         exportButton.Click += ExportButton_Click;
@@ -220,27 +269,27 @@ public sealed class MainForm : Form
         }
 
         _sourceFileTextBox.Text = dialog.FileName;
-        if (string.IsNullOrWhiteSpace(_csvFileTextBox.Text))
+        if (string.IsNullOrWhiteSpace(_excelFileTextBox.Text))
         {
-            _csvFileTextBox.Text = CreateDefaultCsvPath(dialog.FileName);
+            _excelFileTextBox.Text = CreateDefaultExcelPath(dialog.FileName);
         }
     }
 
-    private void BrowseCsvButton_Click(object? sender, EventArgs e)
+    private void BrowseExcelButton_Click(object? sender, EventArgs e)
     {
         using var dialog = new SaveFileDialog
         {
-            Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
-            Title = "CSV出力先を選択",
-            FileName = string.IsNullOrWhiteSpace(_csvFileTextBox.Text)
-                ? "functions.csv"
-                : Path.GetFileName(_csvFileTextBox.Text),
-            InitialDirectory = GetInitialCsvDirectory()
+            Filter = "Excel workbook (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+            Title = "Excel出力先を選択",
+            FileName = string.IsNullOrWhiteSpace(_excelFileTextBox.Text)
+                ? "functions.xlsx"
+                : Path.GetFileName(_excelFileTextBox.Text),
+            InitialDirectory = GetInitialExcelDirectory()
         };
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
-            _csvFileTextBox.Text = dialog.FileName;
+            _excelFileTextBox.Text = dialog.FileName;
         }
     }
 
@@ -258,24 +307,34 @@ public sealed class MainForm : Form
                 return;
             }
 
-            var csvPath = EnsureCsvPath();
-            MethodSummaryCsvWriter.WriteToFile(csvPath, _currentResults);
-            SetStatus($"{_currentResults.Count} 件のメソッドをCSV出力しました。");
+            var excelPath = EnsureExcelPath();
+            MethodAnalysisExcelWriter.WriteToFile(excelPath, _currentResult);
+            SetStatus($"{_currentResult.Summaries.Count} 件のメソッド、{_currentResult.Parameters.Count} 件の仮引数をExcel出力しました。");
         }
         catch (Exception ex)
         {
-            ShowError("CSV出力に失敗しました。", ex);
+            ShowError("Excel出力に失敗しました。", ex);
         }
     }
 
-    private void CopyFunctionNamesButton_Click(object? sender, EventArgs e)
+    private void CopySummaryFunctionNamesButton_Click(object? sender, EventArgs e)
     {
-        CopyText(_functionNamesTextBox.Text, "関数名をコピーしました。");
+        CopyText(_summaryFunctionNamesTextBox.Text, "Summaryシートの関数名をコピーしました。");
     }
 
     private void CopySummaryCommentsButton_Click(object? sender, EventArgs e)
     {
         CopyText(_summaryCommentsTextBox.Text, "Summaryコメントをコピーしました。");
+    }
+
+    private void CopyParameterFunctionNamesButton_Click(object? sender, EventArgs e)
+    {
+        CopyText(_parameterFunctionNamesTextBox.Text, "Parametersシートの関数名をコピーしました。");
+    }
+
+    private void CopyParameterNamesButton_Click(object? sender, EventArgs e)
+    {
+        CopyText(_parameterNamesTextBox.Text, "仮引数名をコピーしました。");
     }
 
     private bool AnalyzeCurrentFile()
@@ -293,15 +352,15 @@ public sealed class MainForm : Form
                 throw new FileNotFoundException("解析対象の C# ファイルが見つかりません。", sourcePath);
             }
 
-            var results = CSharpMethodSummaryExtractor.ExtractFromFile(sourcePath);
-            UpdatePreview(results);
+            var result = CSharpMethodSummaryExtractor.AnalyzeFile(sourcePath);
+            UpdatePreview(result);
 
-            if (string.IsNullOrWhiteSpace(_csvFileTextBox.Text))
+            if (string.IsNullOrWhiteSpace(_excelFileTextBox.Text))
             {
-                _csvFileTextBox.Text = CreateDefaultCsvPath(sourcePath);
+                _excelFileTextBox.Text = CreateDefaultExcelPath(sourcePath);
             }
 
-            SetStatus($"{results.Count} 件のメソッドを解析しました。");
+            SetStatus($"{result.Summaries.Count} 件のメソッド、{result.Parameters.Count} 件の仮引数を解析しました。");
             return true;
         }
         catch (Exception ex)
@@ -311,39 +370,45 @@ public sealed class MainForm : Form
         }
     }
 
-    private void UpdatePreview(IReadOnlyList<MethodSummary> results)
+    private void UpdatePreview(MethodAnalysisResult result)
     {
-        _currentResults = results;
-        _functionNamesTextBox.Text = string.Join(Environment.NewLine, results.Select(result => result.FunctionName));
-        _summaryCommentsTextBox.Text = string.Join(Environment.NewLine, results.Select(result => result.SummaryComment));
+        _currentResult = result;
+        _summaryFunctionNamesTextBox.Text = string.Join(Environment.NewLine, result.Summaries.Select(summary => summary.FunctionName));
+        _summaryCommentsTextBox.Text = string.Join(Environment.NewLine, result.Summaries.Select(summary => summary.SummaryComment));
+        _parameterFunctionNamesTextBox.Text = string.Join(Environment.NewLine, result.Parameters.Select(parameter => parameter.FunctionName));
+        _parameterNamesTextBox.Text = string.Join(Environment.NewLine, result.Parameters.Select(parameter => parameter.ParameterName));
 
-        var hasResults = results.Count > 0;
-        _copyFunctionNamesButton.Enabled = hasResults;
-        _copySummaryCommentsButton.Enabled = hasResults;
+        var hasSummaries = result.Summaries.Count > 0;
+        _copySummaryFunctionNamesButton.Enabled = hasSummaries;
+        _copySummaryCommentsButton.Enabled = hasSummaries;
+
+        var hasParameters = result.Parameters.Count > 0;
+        _copyParameterFunctionNamesButton.Enabled = hasParameters;
+        _copyParameterNamesButton.Enabled = hasParameters;
     }
 
-    private string EnsureCsvPath()
+    private string EnsureExcelPath()
     {
-        var csvPath = _csvFileTextBox.Text.Trim();
-        if (!string.IsNullOrWhiteSpace(csvPath))
+        var excelPath = _excelFileTextBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(excelPath))
         {
-            return csvPath;
+            return excelPath;
         }
 
-        csvPath = CreateDefaultCsvPath(_sourceFileTextBox.Text.Trim());
-        _csvFileTextBox.Text = csvPath;
-        return csvPath;
+        excelPath = CreateDefaultExcelPath(_sourceFileTextBox.Text.Trim());
+        _excelFileTextBox.Text = excelPath;
+        return excelPath;
     }
 
-    private string GetInitialCsvDirectory()
+    private string GetInitialExcelDirectory()
     {
-        var csvPath = _csvFileTextBox.Text.Trim();
-        if (!string.IsNullOrWhiteSpace(csvPath))
+        var excelPath = _excelFileTextBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(excelPath))
         {
-            var csvDirectory = Path.GetDirectoryName(csvPath);
-            if (!string.IsNullOrWhiteSpace(csvDirectory) && Directory.Exists(csvDirectory))
+            var excelDirectory = Path.GetDirectoryName(excelPath);
+            if (!string.IsNullOrWhiteSpace(excelDirectory) && Directory.Exists(excelDirectory))
             {
-                return csvDirectory;
+                return excelDirectory;
             }
         }
 
@@ -354,15 +419,15 @@ public sealed class MainForm : Form
             : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
     }
 
-    private static string CreateDefaultCsvPath(string sourcePath)
+    private static string CreateDefaultExcelPath(string sourcePath)
     {
         var directory = Path.GetDirectoryName(sourcePath);
         var fileName = Path.GetFileNameWithoutExtension(sourcePath);
-        var csvFileName = string.IsNullOrWhiteSpace(fileName) ? "functions.csv" : $"{fileName}_functions.csv";
+        var excelFileName = string.IsNullOrWhiteSpace(fileName) ? "functions.xlsx" : $"{fileName}_functions.xlsx";
 
         return string.IsNullOrWhiteSpace(directory)
-            ? csvFileName
-            : Path.Combine(directory, csvFileName);
+            ? excelFileName
+            : Path.Combine(directory, excelFileName);
     }
 
     private void CopyText(string text, string successMessage)

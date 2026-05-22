@@ -12,23 +12,45 @@ public static class CSharpMethodSummaryExtractor
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
-        return ExtractFromSource(File.ReadAllText(filePath, Encoding.UTF8));
+        return AnalyzeFile(filePath).Summaries;
     }
 
     public static IReadOnlyList<MethodSummary> ExtractFromSource(string source)
+    {
+        return AnalyzeSource(source).Summaries;
+    }
+
+    public static MethodAnalysisResult AnalyzeFile(string filePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+
+        return AnalyzeSource(File.ReadAllText(filePath, Encoding.UTF8));
+    }
+
+    public static MethodAnalysisResult AnalyzeSource(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
 
         var tree = CSharpSyntaxTree.ParseText(source);
         var root = tree.GetCompilationUnitRoot();
-
-        return root
+        var methods = root
             .DescendantNodes()
             .OfType<MethodDeclarationSyntax>()
+            .ToList();
+
+        var summaries = methods
             .Select(method => new MethodSummary(
                 method.Identifier.ValueText,
                 ExtractSummaryComment(method)))
             .ToList();
+
+        var parameters = methods
+            .SelectMany(method => method.ParameterList.Parameters.Select(parameter => new MethodParameter(
+                method.Identifier.ValueText,
+                parameter.Identifier.ValueText)))
+            .ToList();
+
+        return new MethodAnalysisResult(summaries, parameters);
     }
 
     private static string ExtractSummaryComment(MethodDeclarationSyntax method)

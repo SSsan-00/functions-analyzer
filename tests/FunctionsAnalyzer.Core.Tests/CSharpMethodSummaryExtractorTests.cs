@@ -126,4 +126,32 @@ public sealed class CSharpMethodSummaryExtractorTests
         Assert.AreEqual("Outer", result.FunctionName);
         Assert.AreEqual("Outer summary.", result.SummaryComment);
     }
+
+    [TestMethod]
+    public void AnalyzeSource_ReturnsParameterRowsForEachMethodParameter()
+    {
+        const string source = """
+            public sealed class Sample
+            {
+                public void Foo(string arg1, int arg2)
+                {
+                }
+
+                public int Bar()
+                {
+                    return 0;
+                }
+            }
+            """;
+
+        var result = CSharpMethodSummaryExtractor.AnalyzeSource(source);
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                new MethodParameter("Foo", "arg1"),
+                new MethodParameter("Foo", "arg2")
+            },
+            result.Parameters.ToArray());
+    }
 }

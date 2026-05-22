@@ -42,7 +42,7 @@ obj/
 Write-SourceFile "README.md" @'
 # C# Functions Analyzer
 
-WinFormsで操作するC#ソース解析ツールです。選択した `.cs` ファイル内の通常のメソッド定義をRoslyn ASTで解析し、メソッド名とXMLドキュメントコメントの `<summary>` をCSVに出力します。
+WinFormsで操作するC#ソース解析ツールです。選択した `.cs` ファイル内の通常のメソッド定義をRoslyn ASTで解析し、メソッド名、Summaryコメント、仮引数名をExcelブックに出力します。
 
 ## 必要環境
 
@@ -54,43 +54,6 @@ WinFormsで操作するC#ソース解析ツールです。選択した `.cs` フ
 ```powershell
 dotnet run --project .\src\FunctionsAnalyzer.Gui\FunctionsAnalyzer.Gui.csproj
 ```
-'@
-
-Write-SourceFile "FunctionsAnalyzer.sln" @'
-
-Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.0.31903.59
-MinimumVisualStudioVersion = 10.0.40219.1
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FunctionsAnalyzer.Core", "src\FunctionsAnalyzer.Core\FunctionsAnalyzer.Core.csproj", "{B6069699-A711-4195-8BC4-D382438AB187}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FunctionsAnalyzer.Gui", "src\FunctionsAnalyzer.Gui\FunctionsAnalyzer.Gui.csproj", "{B43A9A00-FF65-42BB-A815-12AB51A80503}"
-EndProject
-Global
-	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|Any CPU = Debug|Any CPU
-		Release|Any CPU = Release|Any CPU
-	EndGlobalSection
-	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{B6069699-A711-4195-8BC4-D382438AB187}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{B6069699-A711-4195-8BC4-D382438AB187}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{B6069699-A711-4195-8BC4-D382438AB187}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{B6069699-A711-4195-8BC4-D382438AB187}.Release|Any CPU.Build.0 = Release|Any CPU
-		{B43A9A00-FF65-42BB-A815-12AB51A80503}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{B43A9A00-FF65-42BB-A815-12AB51A80503}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{B43A9A00-FF65-42BB-A815-12AB51A80503}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{B43A9A00-FF65-42BB-A815-12AB51A80503}.Release|Any CPU.Build.0 = Release|Any CPU
-	EndGlobalSection
-	GlobalSection(SolutionProperties) = preSolution
-		HideSolutionNode = FALSE
-	EndGlobalSection
-	GlobalSection(NestedProjects) = preSolution
-		{B6069699-A711-4195-8BC4-D382438AB187} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-		{B43A9A00-FF65-42BB-A815-12AB51A80503} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-	EndGlobalSection
-EndGlobal
 '@
 
 Write-SourceFile "src\FunctionsAnalyzer.Core\FunctionsAnalyzer.Core.csproj" @'
@@ -109,13 +72,9 @@ Write-SourceFile "src\FunctionsAnalyzer.Core\FunctionsAnalyzer.Core.csproj" @'
 </Project>
 '@
 
-Write-SourceFile "src\FunctionsAnalyzer.Core\MethodSummary.cs" @'
-namespace FunctionsAnalyzer.Core;
-
-public sealed record MethodSummary(string FunctionName, string SummaryComment);
-'@
-
-Write-SourceFile "src\FunctionsAnalyzer.Core\CSharpMethodSummaryExtractor.cs" @'
+Write-SourceFile "src\FunctionsAnalyzer.Core\Analysis.cs" @'
+using System.IO.Compression;
+using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
@@ -124,29 +83,41 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace FunctionsAnalyzer.Core;
 
+public sealed record MethodSummary(string FunctionName, string SummaryComment);
+
+public sealed record MethodParameter(string FunctionName, string ParameterName);
+
+public sealed record MethodAnalysisResult(
+    IReadOnlyList<MethodSummary> Summaries,
+    IReadOnlyList<MethodParameter> Parameters);
+
 public static class CSharpMethodSummaryExtractor
 {
-    public static IReadOnlyList<MethodSummary> ExtractFromFile(string filePath)
+    public static MethodAnalysisResult AnalyzeFile(string filePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
-        return ExtractFromSource(File.ReadAllText(filePath, Encoding.UTF8));
+        return AnalyzeSource(File.ReadAllText(filePath, Encoding.UTF8));
     }
 
-    public static IReadOnlyList<MethodSummary> ExtractFromSource(string source)
+    public static MethodAnalysisResult AnalyzeSource(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
 
         var tree = CSharpSyntaxTree.ParseText(source);
         var root = tree.GetCompilationUnitRoot();
+        var methods = root.DescendantNodes().OfType<MethodDeclarationSyntax>().ToList();
 
-        return root
-            .DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
-            .Select(method => new MethodSummary(
-                method.Identifier.ValueText,
-                ExtractSummaryComment(method)))
+        var summaries = methods
+            .Select(method => new MethodSummary(method.Identifier.ValueText, ExtractSummaryComment(method)))
             .ToList();
+        var parameters = methods
+            .SelectMany(method => method.ParameterList.Parameters.Select(parameter => new MethodParameter(
+                method.Identifier.ValueText,
+                parameter.Identifier.ValueText)))
+            .ToList();
+
+        return new MethodAnalysisResult(summaries, parameters);
     }
 
     private static string ExtractSummaryComment(MethodDeclarationSyntax method)
@@ -170,18 +141,14 @@ public static class CSharpMethodSummaryExtractor
                 "summary",
                 StringComparison.OrdinalIgnoreCase));
 
-        if (summaryElement is null)
-        {
-            return string.Empty;
-        }
-
-        return NormalizeWhitespace(ReadXmlText(summaryElement.Content));
+        return summaryElement is null
+            ? string.Empty
+            : Regex.Replace(ReadXmlText(summaryElement.Content), @"\s+", " ").Trim();
     }
 
     private static string ReadXmlText(SyntaxList<XmlNodeSyntax> nodes)
     {
         var builder = new StringBuilder();
-
         foreach (var node in nodes)
         {
             AppendXmlText(node, builder);
@@ -210,43 +177,14 @@ public static class CSharpMethodSummaryExtractor
                 break;
         }
     }
-
-    private static string NormalizeWhitespace(string value)
-    {
-        return Regex.Replace(value, @"\s+", " ").Trim();
-    }
 }
-'@
 
-Write-SourceFile "src\FunctionsAnalyzer.Core\MethodSummaryCsvWriter.cs" @'
-using System.Text;
-
-namespace FunctionsAnalyzer.Core;
-
-public static class MethodSummaryCsvWriter
+public static class MethodAnalysisExcelWriter
 {
-    public static string ToCsv(IEnumerable<MethodSummary> methods)
-    {
-        ArgumentNullException.ThrowIfNull(methods);
-
-        var builder = new StringBuilder();
-        builder.AppendLine("関数名,Summaryコメント");
-
-        foreach (var method in methods)
-        {
-            builder
-                .Append(Escape(method.FunctionName))
-                .Append(',')
-                .Append(Escape(method.SummaryComment))
-                .AppendLine();
-        }
-
-        return builder.ToString();
-    }
-
-    public static void WriteToFile(string filePath, IEnumerable<MethodSummary> methods)
+    public static void WriteToFile(string filePath, MethodAnalysisResult result)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        ArgumentNullException.ThrowIfNull(result);
 
         var directory = Path.GetDirectoryName(Path.GetFullPath(filePath));
         if (!string.IsNullOrEmpty(directory))
@@ -254,17 +192,136 @@ public static class MethodSummaryCsvWriter
             Directory.CreateDirectory(directory);
         }
 
-        File.WriteAllText(filePath, ToCsv(methods), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        using var stream = File.Create(filePath);
+        Write(stream, result);
     }
 
-    private static string Escape(string value)
+    public static void Write(Stream stream, MethodAnalysisResult result)
     {
-        if (value.Contains('"') || value.Contains(',') || value.Contains('\r') || value.Contains('\n'))
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
+
+        WriteEntry(archive, "[Content_Types].xml", CreateContentTypesXml());
+        WriteEntry(archive, "_rels/.rels", CreatePackageRelationshipsXml());
+        WriteEntry(archive, "xl/workbook.xml", CreateWorkbookXml());
+        WriteEntry(archive, "xl/_rels/workbook.xml.rels", CreateWorkbookRelationshipsXml());
+        WriteEntry(archive, "xl/styles.xml", CreateStylesXml());
+        WriteEntry(archive, "xl/worksheets/sheet1.xml", CreateWorksheetXml(
+            new[] { "関数名", "Summaryコメント" },
+            result.Summaries.Select(summary => new[] { summary.FunctionName, summary.SummaryComment }),
+            secondColumnWidth: 80));
+        WriteEntry(archive, "xl/worksheets/sheet2.xml", CreateWorksheetXml(
+            new[] { "関数名", "仮引数名" },
+            result.Parameters.Select(parameter => new[] { parameter.FunctionName, parameter.ParameterName }),
+            secondColumnWidth: 28));
+    }
+
+    private static void WriteEntry(ZipArchive archive, string path, string content)
+    {
+        var entry = archive.CreateEntry(path, CompressionLevel.Optimal);
+        using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        writer.Write(content);
+    }
+
+    private static string CreateContentTypesXml() => """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+          <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+          <Default Extension="xml" ContentType="application/xml"/>
+          <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+          <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+          <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+          <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+        </Types>
+        """;
+
+    private static string CreatePackageRelationshipsXml() => """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+        </Relationships>
+        """;
+
+    private static string CreateWorkbookXml() => """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+          <sheets>
+            <sheet name="Summary" sheetId="1" r:id="rId1"/>
+            <sheet name="Parameters" sheetId="2" r:id="rId2"/>
+          </sheets>
+        </workbook>
+        """;
+
+    private static string CreateWorkbookRelationshipsXml() => """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+          <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+          <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+        </Relationships>
+        """;
+
+    private static string CreateStylesXml() => """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+          <fonts count="2">
+            <font><sz val="11"/><name val="Calibri"/></font>
+            <font><b/><sz val="11"/><name val="Calibri"/></font>
+          </fonts>
+          <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+          <borders count="1"><border/></borders>
+          <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+          <cellXfs count="2">
+            <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+            <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+          </cellXfs>
+          <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+        </styleSheet>
+        """;
+
+    private static string CreateWorksheetXml(IReadOnlyList<string> headers, IEnumerable<IReadOnlyList<string>> rows, double secondColumnWidth)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>""");
+        builder.AppendLine("""<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">""");
+        builder.AppendLine($"""  <cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="{secondColumnWidth}" customWidth="1"/></cols>""");
+        builder.AppendLine("""  <sheetData>""");
+        WriteRow(builder, 1, headers, styleIndex: 1);
+
+        var rowIndex = 2;
+        foreach (var row in rows)
         {
-            return $"\"{value.Replace("\"", "\"\"")}\"";
+            WriteRow(builder, rowIndex, row, styleIndex: 0);
+            rowIndex++;
         }
 
-        return value;
+        builder.AppendLine("""  </sheetData>""");
+        builder.AppendLine("""</worksheet>""");
+        return builder.ToString();
+    }
+
+    private static void WriteRow(StringBuilder builder, int rowIndex, IReadOnlyList<string> values, int styleIndex)
+    {
+        builder.AppendLine($"""    <row r="{rowIndex}">""");
+        for (var columnIndex = 0; columnIndex < values.Count; columnIndex++)
+        {
+            var cellReference = $"{ToColumnName(columnIndex + 1)}{rowIndex}";
+            builder.AppendLine($"""      <c r="{cellReference}" s="{styleIndex}" t="inlineStr"><is><t xml:space="preserve">{SecurityElement.Escape(values[columnIndex])}</t></is></c>""");
+        }
+
+        builder.AppendLine("""    </row>""");
+    }
+
+    private static string ToColumnName(int columnNumber)
+    {
+        var name = string.Empty;
+        while (columnNumber > 0)
+        {
+            columnNumber--;
+            name = (char)('A' + columnNumber % 26) + name;
+            columnNumber /= 26;
+        }
+
+        return name;
     }
 }
 '@
@@ -289,6 +346,8 @@ Write-SourceFile "src\FunctionsAnalyzer.Gui\FunctionsAnalyzer.Gui.csproj" @'
 '@
 
 Write-SourceFile "src\FunctionsAnalyzer.Gui\Program.cs" @'
+using FunctionsAnalyzer.Core;
+
 namespace FunctionsAnalyzer.Gui;
 
 internal static class Program
@@ -300,173 +359,117 @@ internal static class Program
         Application.Run(new MainForm());
     }
 }
-'@
-
-Write-SourceFile "src\FunctionsAnalyzer.Gui\MainForm.cs" @'
-using FunctionsAnalyzer.Core;
-
-namespace FunctionsAnalyzer.Gui;
 
 public sealed class MainForm : Form
 {
     private readonly TextBox _sourceFileTextBox = new();
-    private readonly TextBox _csvFileTextBox = new();
-    private readonly TextBox _functionNamesTextBox = new();
+    private readonly TextBox _excelFileTextBox = new();
+    private readonly TextBox _summaryFunctionNamesTextBox = new();
     private readonly TextBox _summaryCommentsTextBox = new();
+    private readonly TextBox _parameterFunctionNamesTextBox = new();
+    private readonly TextBox _parameterNamesTextBox = new();
     private readonly Label _statusLabel = new();
-    private readonly Button _copyFunctionNamesButton = new();
+    private readonly Button _copySummaryFunctionNamesButton = new();
     private readonly Button _copySummaryCommentsButton = new();
-
-    private IReadOnlyList<MethodSummary> _currentResults = Array.Empty<MethodSummary>();
+    private readonly Button _copyParameterFunctionNamesButton = new();
+    private readonly Button _copyParameterNamesButton = new();
+    private MethodAnalysisResult _currentResult = new(Array.Empty<MethodSummary>(), Array.Empty<MethodParameter>());
 
     public MainForm()
     {
         Text = "C# Functions Analyzer";
-        MinimumSize = new Size(860, 560);
+        MinimumSize = new Size(900, 600);
         StartPosition = FormStartPosition.CenterScreen;
-
         InitializeLayout();
-        UpdatePreview(Array.Empty<MethodSummary>());
+        UpdatePreview(new MethodAnalysisResult(Array.Empty<MethodSummary>(), Array.Empty<MethodParameter>()));
         SetStatus("解析対象の C# ファイルを選択してください。");
     }
 
     private void InitializeLayout()
     {
-        var root = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 4,
-            Padding = new Padding(12)
-        };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(12) };
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
         root.Controls.Add(CreatePathPanel(), 0, 0);
-        root.Controls.Add(CreatePreviewPanel(), 0, 1);
+        root.Controls.Add(CreatePreviewTabs(), 0, 1);
         root.Controls.Add(CreateActionPanel(), 0, 2);
         root.Controls.Add(_statusLabel, 0, 3);
-
         _statusLabel.AutoSize = true;
         _statusLabel.Padding = new Padding(0, 8, 0, 0);
-
         Controls.Add(root);
     }
 
     private Control CreatePathPanel()
     {
-        var panel = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            ColumnCount = 3,
-            RowCount = 2,
-            AutoSize = true
-        };
+        var panel = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, RowCount = 2, AutoSize = true };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-        var sourceLabel = CreatePathLabel("C#ファイル");
-        _sourceFileTextBox.Dock = DockStyle.Top;
-        _sourceFileTextBox.Margin = new Padding(0, 0, 8, 8);
-
         var browseSourceButton = CreateBrowseButton();
         browseSourceButton.Click += BrowseSourceButton_Click;
+        var browseExcelButton = CreateBrowseButton();
+        browseExcelButton.Click += BrowseExcelButton_Click;
 
-        var csvLabel = CreatePathLabel("CSV出力先");
-        _csvFileTextBox.Dock = DockStyle.Top;
-        _csvFileTextBox.Margin = new Padding(0, 0, 8, 8);
+        _sourceFileTextBox.Dock = DockStyle.Top;
+        _sourceFileTextBox.Margin = new Padding(0, 0, 8, 8);
+        _excelFileTextBox.Dock = DockStyle.Top;
+        _excelFileTextBox.Margin = new Padding(0, 0, 8, 8);
 
-        var browseCsvButton = CreateBrowseButton();
-        browseCsvButton.Click += BrowseCsvButton_Click;
-
-        panel.Controls.Add(sourceLabel, 0, 0);
+        panel.Controls.Add(CreatePathLabel("C#ファイル"), 0, 0);
         panel.Controls.Add(_sourceFileTextBox, 1, 0);
         panel.Controls.Add(browseSourceButton, 2, 0);
-        panel.Controls.Add(csvLabel, 0, 1);
-        panel.Controls.Add(_csvFileTextBox, 1, 1);
-        panel.Controls.Add(browseCsvButton, 2, 1);
-
+        panel.Controls.Add(CreatePathLabel("Excel出力先"), 0, 1);
+        panel.Controls.Add(_excelFileTextBox, 1, 1);
+        panel.Controls.Add(browseExcelButton, 2, 1);
         return panel;
     }
 
-    private static Label CreatePathLabel(string text)
+    private static Label CreatePathLabel(string text) => new() { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 8, 8) };
+
+    private static Button CreateBrowseButton() => new() { Text = "参照...", AutoSize = true, Margin = new Padding(0, 0, 0, 8) };
+
+    private Control CreatePreviewTabs()
     {
-        return new Label
-        {
-            Text = text,
-            AutoSize = true,
-            Anchor = AnchorStyles.Left,
-            Margin = new Padding(0, 0, 8, 8)
-        };
+        var tabs = new TabControl { Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 8) };
+        var summaryTab = new TabPage("Summary");
+        summaryTab.Controls.Add(CreateColumnPreviewPanel("関数名", _summaryFunctionNamesTextBox, _copySummaryFunctionNamesButton, CopySummaryFunctionNamesButton_Click, "Summaryコメント", _summaryCommentsTextBox, _copySummaryCommentsButton, CopySummaryCommentsButton_Click));
+        var parametersTab = new TabPage("Parameters");
+        parametersTab.Controls.Add(CreateColumnPreviewPanel("関数名", _parameterFunctionNamesTextBox, _copyParameterFunctionNamesButton, CopyParameterFunctionNamesButton_Click, "仮引数名", _parameterNamesTextBox, _copyParameterNamesButton, CopyParameterNamesButton_Click));
+        tabs.TabPages.Add(summaryTab);
+        tabs.TabPages.Add(parametersTab);
+        return tabs;
     }
 
-    private static Button CreateBrowseButton()
+    private static Control CreateColumnPreviewPanel(string leftLabel, TextBox leftTextBox, Button leftCopyButton, EventHandler leftCopyHandler, string rightLabel, TextBox rightTextBox, Button rightCopyButton, EventHandler rightCopyHandler)
     {
-        return new Button
-        {
-            Text = "参照...",
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 8)
-        };
-    }
-
-    private Control CreatePreviewPanel()
-    {
-        var panel = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 2,
-            Margin = new Padding(0, 8, 0, 8)
-        };
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Padding = new Padding(8) };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65));
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-
-        panel.Controls.Add(CreatePreviewHeader("関数名", _copyFunctionNamesButton, CopyFunctionNamesButton_Click), 0, 0);
-        panel.Controls.Add(CreatePreviewHeader("Summaryコメント", _copySummaryCommentsButton, CopySummaryCommentsButton_Click), 1, 0);
-
-        ConfigurePreviewTextBox(_functionNamesTextBox);
-        ConfigurePreviewTextBox(_summaryCommentsTextBox);
-
-        panel.Controls.Add(_functionNamesTextBox, 0, 1);
-        panel.Controls.Add(_summaryCommentsTextBox, 1, 1);
-
+        panel.Controls.Add(CreatePreviewHeader(leftLabel, leftCopyButton, leftCopyHandler), 0, 0);
+        panel.Controls.Add(CreatePreviewHeader(rightLabel, rightCopyButton, rightCopyHandler), 1, 0);
+        ConfigurePreviewTextBox(leftTextBox);
+        ConfigurePreviewTextBox(rightTextBox);
+        panel.Controls.Add(leftTextBox, 0, 1);
+        panel.Controls.Add(rightTextBox, 1, 1);
         return panel;
     }
 
     private static Control CreatePreviewHeader(string labelText, Button copyButton, EventHandler clickHandler)
     {
-        var panel = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 1,
-            AutoSize = true,
-            Margin = new Padding(0, 0, 8, 4)
-        };
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, AutoSize = true, Margin = new Padding(0, 0, 8, 4) };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-        var label = new Label
-        {
-            Text = labelText,
-            AutoSize = true,
-            Anchor = AnchorStyles.Left
-        };
-
         copyButton.Text = "コピー";
         copyButton.AutoSize = true;
         copyButton.Anchor = AnchorStyles.Right;
         copyButton.Click += clickHandler;
-
-        panel.Controls.Add(label, 0, 0);
+        panel.Controls.Add(new Label { Text = labelText, AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
         panel.Controls.Add(copyButton, 1, 0);
-
         return panel;
     }
 
@@ -483,75 +486,45 @@ public sealed class MainForm : Form
 
     private Control CreateActionPanel()
     {
-        var panel = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            AutoSize = true,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false
-        };
-
-        var analyzeButton = new Button
-        {
-            Text = "解析",
-            AutoSize = true
-        };
-        analyzeButton.Click += AnalyzeButton_Click;
-
-        var exportButton = new Button
-        {
-            Text = "CSV出力",
-            AutoSize = true
-        };
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+        var analyzeButton = new Button { Text = "解析", AutoSize = true };
+        analyzeButton.Click += (_, _) => AnalyzeCurrentFile();
+        var exportButton = new Button { Text = "Excel出力", AutoSize = true };
         exportButton.Click += ExportButton_Click;
-
         panel.Controls.Add(analyzeButton);
         panel.Controls.Add(exportButton);
-
         return panel;
     }
 
     private void BrowseSourceButton_Click(object? sender, EventArgs e)
     {
-        using var dialog = new OpenFileDialog
-        {
-            Filter = "C# files (*.cs)|*.cs|All files (*.*)|*.*",
-            Title = "解析対象の C# ファイルを選択"
-        };
-
+        using var dialog = new OpenFileDialog { Filter = "C# files (*.cs)|*.cs|All files (*.*)|*.*", Title = "解析対象の C# ファイルを選択" };
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
         }
 
         _sourceFileTextBox.Text = dialog.FileName;
-        if (string.IsNullOrWhiteSpace(_csvFileTextBox.Text))
+        if (string.IsNullOrWhiteSpace(_excelFileTextBox.Text))
         {
-            _csvFileTextBox.Text = CreateDefaultCsvPath(dialog.FileName);
+            _excelFileTextBox.Text = CreateDefaultExcelPath(dialog.FileName);
         }
     }
 
-    private void BrowseCsvButton_Click(object? sender, EventArgs e)
+    private void BrowseExcelButton_Click(object? sender, EventArgs e)
     {
         using var dialog = new SaveFileDialog
         {
-            Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
-            Title = "CSV出力先を選択",
-            FileName = string.IsNullOrWhiteSpace(_csvFileTextBox.Text)
-                ? "functions.csv"
-                : Path.GetFileName(_csvFileTextBox.Text),
-            InitialDirectory = GetInitialCsvDirectory()
+            Filter = "Excel workbook (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+            Title = "Excel出力先を選択",
+            FileName = string.IsNullOrWhiteSpace(_excelFileTextBox.Text) ? "functions.xlsx" : Path.GetFileName(_excelFileTextBox.Text),
+            InitialDirectory = GetInitialExcelDirectory()
         };
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
-            _csvFileTextBox.Text = dialog.FileName;
+            _excelFileTextBox.Text = dialog.FileName;
         }
-    }
-
-    private void AnalyzeButton_Click(object? sender, EventArgs e)
-    {
-        AnalyzeCurrentFile();
     }
 
     private void ExportButton_Click(object? sender, EventArgs e)
@@ -563,24 +536,14 @@ public sealed class MainForm : Form
                 return;
             }
 
-            var csvPath = EnsureCsvPath();
-            MethodSummaryCsvWriter.WriteToFile(csvPath, _currentResults);
-            SetStatus($"{_currentResults.Count} 件のメソッドをCSV出力しました。");
+            var excelPath = EnsureExcelPath();
+            MethodAnalysisExcelWriter.WriteToFile(excelPath, _currentResult);
+            SetStatus($"{_currentResult.Summaries.Count} 件のメソッド、{_currentResult.Parameters.Count} 件の仮引数をExcel出力しました。");
         }
         catch (Exception ex)
         {
-            ShowError("CSV出力に失敗しました。", ex);
+            ShowError("Excel出力に失敗しました。", ex);
         }
-    }
-
-    private void CopyFunctionNamesButton_Click(object? sender, EventArgs e)
-    {
-        CopyText(_functionNamesTextBox.Text, "関数名をコピーしました。");
-    }
-
-    private void CopySummaryCommentsButton_Click(object? sender, EventArgs e)
-    {
-        CopyText(_summaryCommentsTextBox.Text, "Summaryコメントをコピーしました。");
     }
 
     private bool AnalyzeCurrentFile()
@@ -598,15 +561,14 @@ public sealed class MainForm : Form
                 throw new FileNotFoundException("解析対象の C# ファイルが見つかりません。", sourcePath);
             }
 
-            var results = CSharpMethodSummaryExtractor.ExtractFromFile(sourcePath);
-            UpdatePreview(results);
-
-            if (string.IsNullOrWhiteSpace(_csvFileTextBox.Text))
+            var result = CSharpMethodSummaryExtractor.AnalyzeFile(sourcePath);
+            UpdatePreview(result);
+            if (string.IsNullOrWhiteSpace(_excelFileTextBox.Text))
             {
-                _csvFileTextBox.Text = CreateDefaultCsvPath(sourcePath);
+                _excelFileTextBox.Text = CreateDefaultExcelPath(sourcePath);
             }
 
-            SetStatus($"{results.Count} 件のメソッドを解析しました。");
+            SetStatus($"{result.Summaries.Count} 件のメソッド、{result.Parameters.Count} 件の仮引数を解析しました。");
             return true;
         }
         catch (Exception ex)
@@ -616,59 +578,65 @@ public sealed class MainForm : Form
         }
     }
 
-    private void UpdatePreview(IReadOnlyList<MethodSummary> results)
+    private void UpdatePreview(MethodAnalysisResult result)
     {
-        _currentResults = results;
-        _functionNamesTextBox.Text = string.Join(Environment.NewLine, results.Select(result => result.FunctionName));
-        _summaryCommentsTextBox.Text = string.Join(Environment.NewLine, results.Select(result => result.SummaryComment));
-
-        var hasResults = results.Count > 0;
-        _copyFunctionNamesButton.Enabled = hasResults;
-        _copySummaryCommentsButton.Enabled = hasResults;
+        _currentResult = result;
+        _summaryFunctionNamesTextBox.Text = string.Join(Environment.NewLine, result.Summaries.Select(summary => summary.FunctionName));
+        _summaryCommentsTextBox.Text = string.Join(Environment.NewLine, result.Summaries.Select(summary => summary.SummaryComment));
+        _parameterFunctionNamesTextBox.Text = string.Join(Environment.NewLine, result.Parameters.Select(parameter => parameter.FunctionName));
+        _parameterNamesTextBox.Text = string.Join(Environment.NewLine, result.Parameters.Select(parameter => parameter.ParameterName));
+        _copySummaryFunctionNamesButton.Enabled = result.Summaries.Count > 0;
+        _copySummaryCommentsButton.Enabled = result.Summaries.Count > 0;
+        _copyParameterFunctionNamesButton.Enabled = result.Parameters.Count > 0;
+        _copyParameterNamesButton.Enabled = result.Parameters.Count > 0;
     }
 
-    private string EnsureCsvPath()
+    private string EnsureExcelPath()
     {
-        var csvPath = _csvFileTextBox.Text.Trim();
-        if (!string.IsNullOrWhiteSpace(csvPath))
+        var excelPath = _excelFileTextBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(excelPath))
         {
-            return csvPath;
+            return excelPath;
         }
 
-        csvPath = CreateDefaultCsvPath(_sourceFileTextBox.Text.Trim());
-        _csvFileTextBox.Text = csvPath;
-        return csvPath;
+        excelPath = CreateDefaultExcelPath(_sourceFileTextBox.Text.Trim());
+        _excelFileTextBox.Text = excelPath;
+        return excelPath;
     }
 
-    private string GetInitialCsvDirectory()
+    private string GetInitialExcelDirectory()
     {
-        var csvPath = _csvFileTextBox.Text.Trim();
-        if (!string.IsNullOrWhiteSpace(csvPath))
+        var excelPath = _excelFileTextBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(excelPath))
         {
-            var csvDirectory = Path.GetDirectoryName(csvPath);
-            if (!string.IsNullOrWhiteSpace(csvDirectory) && Directory.Exists(csvDirectory))
+            var excelDirectory = Path.GetDirectoryName(excelPath);
+            if (!string.IsNullOrWhiteSpace(excelDirectory) && Directory.Exists(excelDirectory))
             {
-                return csvDirectory;
+                return excelDirectory;
             }
         }
 
-        var sourcePath = _sourceFileTextBox.Text.Trim();
-        var sourceDirectory = Path.GetDirectoryName(sourcePath);
+        var sourceDirectory = Path.GetDirectoryName(_sourceFileTextBox.Text.Trim());
         return !string.IsNullOrWhiteSpace(sourceDirectory) && Directory.Exists(sourceDirectory)
             ? sourceDirectory
             : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
     }
 
-    private static string CreateDefaultCsvPath(string sourcePath)
+    private static string CreateDefaultExcelPath(string sourcePath)
     {
         var directory = Path.GetDirectoryName(sourcePath);
         var fileName = Path.GetFileNameWithoutExtension(sourcePath);
-        var csvFileName = string.IsNullOrWhiteSpace(fileName) ? "functions.csv" : $"{fileName}_functions.csv";
-
-        return string.IsNullOrWhiteSpace(directory)
-            ? csvFileName
-            : Path.Combine(directory, csvFileName);
+        var excelFileName = string.IsNullOrWhiteSpace(fileName) ? "functions.xlsx" : $"{fileName}_functions.xlsx";
+        return string.IsNullOrWhiteSpace(directory) ? excelFileName : Path.Combine(directory, excelFileName);
     }
+
+    private void CopySummaryFunctionNamesButton_Click(object? sender, EventArgs e) => CopyText(_summaryFunctionNamesTextBox.Text, "Summaryシートの関数名をコピーしました。");
+
+    private void CopySummaryCommentsButton_Click(object? sender, EventArgs e) => CopyText(_summaryCommentsTextBox.Text, "Summaryコメントをコピーしました。");
+
+    private void CopyParameterFunctionNamesButton_Click(object? sender, EventArgs e) => CopyText(_parameterFunctionNamesTextBox.Text, "Parametersシートの関数名をコピーしました。");
+
+    private void CopyParameterNamesButton_Click(object? sender, EventArgs e) => CopyText(_parameterNamesTextBox.Text, "仮引数名をコピーしました。");
 
     private void CopyText(string text, string successMessage)
     {
@@ -684,12 +652,7 @@ public sealed class MainForm : Form
     private void ShowError(string message, Exception exception)
     {
         SetStatus(message);
-        MessageBox.Show(
-            this,
-            $"{message}{Environment.NewLine}{exception.Message}",
-            "C# Functions Analyzer",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Error);
+        MessageBox.Show(this, $"{message}{Environment.NewLine}{exception.Message}", "C# Functions Analyzer", MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
 
     private void SetStatus(string message)
