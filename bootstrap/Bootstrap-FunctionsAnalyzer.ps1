@@ -30,6 +30,15 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 
 New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
 
+Write-SourceFile "Directory.Build.props" @'
+<Project>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+</Project>
+'@
+
 Write-SourceFile ".gitignore" @'
 bin/
 obj/
@@ -49,11 +58,29 @@ WinFormsで操作するC#ソース解析ツールです。選択した `.cs` フ
 - .NET 9 SDK
 - Windows
 
+リリース用の単一ファイルexeは自己完結形式で作成するため、利用者側に .NET 9 のインストールは不要です。
+
 ## 実行
 
 ```powershell
 dotnet run --project .\src\FunctionsAnalyzer.Gui\FunctionsAnalyzer.Gui.csproj
 ```
+
+## リリースビルド
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Publish-Release.ps1
+```
+
+作成されるexe:
+
+```text
+src\FunctionsAnalyzer.Gui\bin\Release\net9.0-windows\win-x64\publish\FunctionsAnalyzer.exe
+```
+
+## 導入手順
+
+利用者には `FunctionsAnalyzer.exe` を任意のフォルダに配置してもらい、ダブルクリックで起動します。
 '@
 
 Write-SourceFile "src\FunctionsAnalyzer.Core\FunctionsAnalyzer.Core.csproj" @'
@@ -332,6 +359,7 @@ Write-SourceFile "src\FunctionsAnalyzer.Gui\FunctionsAnalyzer.Gui.csproj" @'
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
+    <AssemblyName>FunctionsAnalyzer</AssemblyName>
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
@@ -342,6 +370,26 @@ Write-SourceFile "src\FunctionsAnalyzer.Gui\FunctionsAnalyzer.Gui.csproj" @'
     <ProjectReference Include="..\FunctionsAnalyzer.Core\FunctionsAnalyzer.Core.csproj" />
   </ItemGroup>
 
+</Project>
+'@
+
+Write-SourceFile "src\FunctionsAnalyzer.Gui\Properties\PublishProfiles\win-x64-single-file.pubxml" @'
+<Project>
+  <PropertyGroup>
+    <Configuration>Release</Configuration>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+    <PublishDir>bin\Release\net9.0-windows\win-x64\publish\</PublishDir>
+  </PropertyGroup>
 </Project>
 '@
 
@@ -660,6 +708,35 @@ public sealed class MainForm : Form
         _statusLabel.Text = $"ステータス: {message}";
     }
 }
+'@
+
+Write-SourceFile "scripts\Publish-Release.ps1" @'
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = "Stop"
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$projectPath = Join-Path $repoRoot "src\FunctionsAnalyzer.Gui\FunctionsAnalyzer.Gui.csproj"
+$publishProfile = "win-x64-single-file"
+$publishDirectory = Join-Path $repoRoot "src\FunctionsAnalyzer.Gui\bin\Release\net9.0-windows\win-x64\publish"
+$exePath = Join-Path $publishDirectory "FunctionsAnalyzer.exe"
+
+if (Test-Path -LiteralPath $publishDirectory) {
+    Remove-Item -LiteralPath $publishDirectory -Recurse -Force
+}
+
+dotnet publish $projectPath -p:PublishProfile=$publishProfile
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
+if (-not (Test-Path -LiteralPath $exePath)) {
+    throw "Publish completed, but the expected exe was not found: $exePath"
+}
+
+Write-Host "Release exe created:"
+Write-Host $exePath
 '@
 
 Write-Host "Source expanded to: $OutputPath"

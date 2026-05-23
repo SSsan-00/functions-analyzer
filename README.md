@@ -19,11 +19,39 @@ WinFormsで操作するC#ソース解析ツールです。選択した `.cs` フ
 - .NET 9 SDK
 - Windows
 
+リリース用の単一ファイルexeは自己完結形式で作成するため、利用者側に .NET 9 のインストールは不要です。
+
 ## 実行
 
 ```powershell
 dotnet run --project .\src\FunctionsAnalyzer.Gui\FunctionsAnalyzer.Gui.csproj
 ```
+
+## リリースビルド
+
+Windows x64向けの単一ファイルexeを作成する場合:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Publish-Release.ps1
+```
+
+または直接 `dotnet publish` を実行します。
+
+```powershell
+dotnet publish .\src\FunctionsAnalyzer.Gui\FunctionsAnalyzer.Gui.csproj -p:PublishProfile=win-x64-single-file
+```
+
+作成されるexe:
+
+```text
+src\FunctionsAnalyzer.Gui\bin\Release\net9.0-windows\win-x64\publish\FunctionsAnalyzer.exe
+```
+
+## 導入手順
+
+利用者には `FunctionsAnalyzer.exe` を任意のフォルダに配置してもらい、ダブルクリックで起動します。自己完結形式の単一ファイルexeとして出力しているため、別途 .NET ランタイムを入れる必要はありません。
+
+このリリースexeはWindows x64向けです。Windows ARM64など別Runtime向けに配布する場合は、publish profileを追加して対象Runtimeでpublishしてください。
 
 ## テスト
 
