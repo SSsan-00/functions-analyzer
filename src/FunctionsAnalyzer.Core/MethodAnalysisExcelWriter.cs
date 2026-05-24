@@ -38,9 +38,10 @@ public static class MethodAnalysisExcelWriter
             result.Summaries.Select(summary => new[] { summary.FunctionName, summary.SummaryComment }),
             secondColumnWidth: 80));
         WriteEntry(archive, "xl/worksheets/sheet2.xml", CreateWorksheetXml(
-            new[] { "関数名", "仮引数名" },
-            result.Parameters.Select(parameter => new[] { parameter.FunctionName, parameter.ParameterName }),
-            secondColumnWidth: 28));
+            new[] { "関数名", "区分", "詳細" },
+            result.Details.Select(detail => new[] { detail.FunctionName, detail.Category, detail.Detail }),
+            secondColumnWidth: 18,
+            thirdColumnWidth: 36));
     }
 
     private static void WriteEntry(ZipArchive archive, string path, string content)
@@ -124,12 +125,19 @@ public static class MethodAnalysisExcelWriter
     private static string CreateWorksheetXml(
         IReadOnlyList<string> headers,
         IEnumerable<IReadOnlyList<string>> rows,
-        double secondColumnWidth)
+        double secondColumnWidth,
+        double? thirdColumnWidth = null)
     {
         var builder = new StringBuilder();
         builder.AppendLine("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>""");
         builder.AppendLine("""<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">""");
-        builder.AppendLine($"""  <cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="{secondColumnWidth}" customWidth="1"/></cols>""");
+        builder.Append($"""  <cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="{secondColumnWidth}" customWidth="1"/>""");
+        if (thirdColumnWidth is not null)
+        {
+            builder.Append($"""<col min="3" max="3" width="{thirdColumnWidth.Value}" customWidth="1"/>""");
+        }
+
+        builder.AppendLine("""</cols>""");
         builder.AppendLine("""  <sheetData>""");
 
         WriteRow(builder, 1, headers, styleIndex: 1);

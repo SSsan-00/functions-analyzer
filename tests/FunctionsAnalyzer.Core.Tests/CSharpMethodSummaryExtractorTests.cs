@@ -128,7 +128,7 @@ public sealed class CSharpMethodSummaryExtractorTests
     }
 
     [TestMethod]
-    public void AnalyzeSource_ReturnsParameterRowsForEachMethodParameter()
+    public void AnalyzeSource_ReturnsParameterAndReturnValueRowsForEachMethod()
     {
         const string source = """
             public sealed class Sample
@@ -149,9 +149,11 @@ public sealed class CSharpMethodSummaryExtractorTests
         CollectionAssert.AreEqual(
             new[]
             {
-                new MethodParameter("Foo", "arg1"),
-                new MethodParameter("Foo", "arg2")
+                new MethodDetail("Foo", "引数", "arg1"),
+                new MethodDetail("Foo", "引数", "arg2"),
+                new MethodDetail("Foo", "戻り値", "void"),
+                new MethodDetail("Bar", "戻り値", "int")
             },
-            result.Parameters.ToArray());
+            result.Details.ToArray());
     }
 }

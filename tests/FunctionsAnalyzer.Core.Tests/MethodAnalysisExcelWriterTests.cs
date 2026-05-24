@@ -18,8 +18,9 @@ public sealed class MethodAnalysisExcelWriterTests
             },
             new[]
             {
-                new MethodParameter("Foo", "arg1"),
-                new MethodParameter("Foo", "arg2")
+                new MethodDetail("Foo", "引数", "arg1"),
+                new MethodDetail("Foo", "引数", "arg2"),
+                new MethodDetail("Foo", "戻り値", "void")
             });
 
         using var stream = new MemoryStream();
@@ -38,7 +39,7 @@ public sealed class MethodAnalysisExcelWriterTests
             new[] { "関数名", "Summaryコメント", "Foo", "Foo summary.", "Bar", string.Empty },
             ReadInlineStrings(summarySheetXml).ToArray());
         CollectionAssert.AreEqual(
-            new[] { "関数名", "仮引数名", "Foo", "arg1", "Foo", "arg2" },
+            new[] { "関数名", "区分", "詳細", "Foo", "引数", "arg1", "Foo", "引数", "arg2", "Foo", "戻り値", "void" },
             ReadInlineStrings(parametersSheetXml).ToArray());
     }
 

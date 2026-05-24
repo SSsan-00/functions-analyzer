@@ -9,16 +9,18 @@ public sealed class MainForm : Form
     private readonly TextBox _summaryFunctionNamesTextBox = new();
     private readonly TextBox _summaryCommentsTextBox = new();
     private readonly TextBox _parameterFunctionNamesTextBox = new();
-    private readonly TextBox _parameterNamesTextBox = new();
+    private readonly TextBox _parameterCategoriesTextBox = new();
+    private readonly TextBox _parameterDetailsTextBox = new();
     private readonly Label _statusLabel = new();
     private readonly Button _copySummaryFunctionNamesButton = new();
     private readonly Button _copySummaryCommentsButton = new();
     private readonly Button _copyParameterFunctionNamesButton = new();
-    private readonly Button _copyParameterNamesButton = new();
+    private readonly Button _copyParameterCategoriesButton = new();
+    private readonly Button _copyParameterDetailsButton = new();
 
     private MethodAnalysisResult _currentResult = new(
         Array.Empty<MethodSummary>(),
-        Array.Empty<MethodParameter>());
+        Array.Empty<MethodDetail>());
 
     public MainForm()
     {
@@ -27,7 +29,7 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
 
         InitializeLayout();
-        UpdatePreview(new MethodAnalysisResult(Array.Empty<MethodSummary>(), Array.Empty<MethodParameter>()));
+        UpdatePreview(new MethodAnalysisResult(Array.Empty<MethodSummary>(), Array.Empty<MethodDetail>()));
         SetStatus("解析対象の C# ファイルを選択してください。");
     }
 
@@ -134,15 +136,19 @@ public sealed class MainForm : Form
             CopySummaryCommentsButton_Click));
 
         var parametersTab = new TabPage("Parameters");
-        parametersTab.Controls.Add(CreateColumnPreviewPanel(
+        parametersTab.Controls.Add(CreateThreeColumnPreviewPanel(
             "関数名",
             _parameterFunctionNamesTextBox,
             _copyParameterFunctionNamesButton,
             CopyParameterFunctionNamesButton_Click,
-            "仮引数名",
-            _parameterNamesTextBox,
-            _copyParameterNamesButton,
-            CopyParameterNamesButton_Click));
+            "区分",
+            _parameterCategoriesTextBox,
+            _copyParameterCategoriesButton,
+            CopyParameterCategoriesButton_Click,
+            "詳細",
+            _parameterDetailsTextBox,
+            _copyParameterDetailsButton,
+            CopyParameterDetailsButton_Click));
 
         tabs.TabPages.Add(summaryTab);
         tabs.TabPages.Add(parametersTab);
@@ -179,6 +185,48 @@ public sealed class MainForm : Form
 
         panel.Controls.Add(leftTextBox, 0, 1);
         panel.Controls.Add(rightTextBox, 1, 1);
+
+        return panel;
+    }
+
+    private static Control CreateThreeColumnPreviewPanel(
+        string leftLabel,
+        TextBox leftTextBox,
+        Button leftCopyButton,
+        EventHandler leftCopyHandler,
+        string centerLabel,
+        TextBox centerTextBox,
+        Button centerCopyButton,
+        EventHandler centerCopyHandler,
+        string rightLabel,
+        TextBox rightTextBox,
+        Button rightCopyButton,
+        EventHandler rightCopyHandler)
+    {
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
+            RowCount = 2,
+            Padding = new Padding(8)
+        };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44));
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        panel.Controls.Add(CreatePreviewHeader(leftLabel, leftCopyButton, leftCopyHandler), 0, 0);
+        panel.Controls.Add(CreatePreviewHeader(centerLabel, centerCopyButton, centerCopyHandler), 1, 0);
+        panel.Controls.Add(CreatePreviewHeader(rightLabel, rightCopyButton, rightCopyHandler), 2, 0);
+
+        ConfigurePreviewTextBox(leftTextBox);
+        ConfigurePreviewTextBox(centerTextBox);
+        ConfigurePreviewTextBox(rightTextBox);
+
+        panel.Controls.Add(leftTextBox, 0, 1);
+        panel.Controls.Add(centerTextBox, 1, 1);
+        panel.Controls.Add(rightTextBox, 2, 1);
 
         return panel;
     }
@@ -309,7 +357,7 @@ public sealed class MainForm : Form
 
             var excelPath = EnsureExcelPath();
             MethodAnalysisExcelWriter.WriteToFile(excelPath, _currentResult);
-            SetStatus($"{_currentResult.Summaries.Count} 件のメソッド、{_currentResult.Parameters.Count} 件の仮引数をExcel出力しました。");
+            SetStatus($"{_currentResult.Summaries.Count} 件のメソッド、{_currentResult.Details.Count} 件のParameters行をExcel出力しました。");
         }
         catch (Exception ex)
         {
@@ -332,9 +380,14 @@ public sealed class MainForm : Form
         CopyText(_parameterFunctionNamesTextBox.Text, "Parametersシートの関数名をコピーしました。");
     }
 
-    private void CopyParameterNamesButton_Click(object? sender, EventArgs e)
+    private void CopyParameterCategoriesButton_Click(object? sender, EventArgs e)
     {
-        CopyText(_parameterNamesTextBox.Text, "仮引数名をコピーしました。");
+        CopyText(_parameterCategoriesTextBox.Text, "区分をコピーしました。");
+    }
+
+    private void CopyParameterDetailsButton_Click(object? sender, EventArgs e)
+    {
+        CopyText(_parameterDetailsTextBox.Text, "詳細をコピーしました。");
     }
 
     private bool AnalyzeCurrentFile()
@@ -360,7 +413,7 @@ public sealed class MainForm : Form
                 _excelFileTextBox.Text = CreateDefaultExcelPath(sourcePath);
             }
 
-            SetStatus($"{result.Summaries.Count} 件のメソッド、{result.Parameters.Count} 件の仮引数を解析しました。");
+            SetStatus($"{result.Summaries.Count} 件のメソッド、{result.Details.Count} 件のParameters行を解析しました。");
             return true;
         }
         catch (Exception ex)
@@ -375,16 +428,18 @@ public sealed class MainForm : Form
         _currentResult = result;
         _summaryFunctionNamesTextBox.Text = string.Join(Environment.NewLine, result.Summaries.Select(summary => summary.FunctionName));
         _summaryCommentsTextBox.Text = string.Join(Environment.NewLine, result.Summaries.Select(summary => summary.SummaryComment));
-        _parameterFunctionNamesTextBox.Text = string.Join(Environment.NewLine, result.Parameters.Select(parameter => parameter.FunctionName));
-        _parameterNamesTextBox.Text = string.Join(Environment.NewLine, result.Parameters.Select(parameter => parameter.ParameterName));
+        _parameterFunctionNamesTextBox.Text = string.Join(Environment.NewLine, result.Details.Select(detail => detail.FunctionName));
+        _parameterCategoriesTextBox.Text = string.Join(Environment.NewLine, result.Details.Select(detail => detail.Category));
+        _parameterDetailsTextBox.Text = string.Join(Environment.NewLine, result.Details.Select(detail => detail.Detail));
 
         var hasSummaries = result.Summaries.Count > 0;
         _copySummaryFunctionNamesButton.Enabled = hasSummaries;
         _copySummaryCommentsButton.Enabled = hasSummaries;
 
-        var hasParameters = result.Parameters.Count > 0;
+        var hasParameters = result.Details.Count > 0;
         _copyParameterFunctionNamesButton.Enabled = hasParameters;
-        _copyParameterNamesButton.Enabled = hasParameters;
+        _copyParameterCategoriesButton.Enabled = hasParameters;
+        _copyParameterDetailsButton.Enabled = hasParameters;
     }
 
     private string EnsureExcelPath()

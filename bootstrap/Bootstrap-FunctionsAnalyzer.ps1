@@ -51,7 +51,7 @@ obj/
 Write-SourceFile "README.md" @'
 # C# Functions Analyzer
 
-WinFormsで操作するC#ソース解析ツールです。選択した `.cs` ファイル内の通常のメソッド定義をRoslyn ASTで解析し、メソッド名、Summaryコメント、仮引数名をExcelブックに出力します。
+WinFormsで操作するC#ソース解析ツールです。選択した `.cs` ファイル内の通常のメソッド定義をRoslyn ASTで解析し、メソッド名、Summaryコメント、仮引数名、戻り値の型をExcelブックに出力します。
 
 ## 必要環境
 
@@ -112,11 +112,11 @@ namespace FunctionsAnalyzer.Core;
 
 public sealed record MethodSummary(string FunctionName, string SummaryComment);
 
-public sealed record MethodParameter(string FunctionName, string ParameterName);
+public sealed record MethodDetail(string FunctionName, string Category, string Detail);
 
 public sealed record MethodAnalysisResult(
     IReadOnlyList<MethodSummary> Summaries,
-    IReadOnlyList<MethodParameter> Parameters);
+    IReadOnlyList<MethodDetail> Details);
 
 public static class CSharpMethodSummaryExtractor
 {
@@ -138,13 +138,22 @@ public static class CSharpMethodSummaryExtractor
         var summaries = methods
             .Select(method => new MethodSummary(method.Identifier.ValueText, ExtractSummaryComment(method)))
             .ToList();
-        var parameters = methods
-            .SelectMany(method => method.ParameterList.Parameters.Select(parameter => new MethodParameter(
-                method.Identifier.ValueText,
-                parameter.Identifier.ValueText)))
+        var details = methods
+            .SelectMany(ExtractDetails)
             .ToList();
 
-        return new MethodAnalysisResult(summaries, parameters);
+        return new MethodAnalysisResult(summaries, details);
+    }
+
+    private static IEnumerable<MethodDetail> ExtractDetails(MethodDeclarationSyntax method)
+    {
+        var functionName = method.Identifier.ValueText;
+        foreach (var parameter in method.ParameterList.Parameters)
+        {
+            yield return new MethodDetail(functionName, "引数", parameter.Identifier.ValueText);
+        }
+
+        yield return new MethodDetail(functionName, "戻り値", method.ReturnType.ToString());
     }
 
     private static string ExtractSummaryComment(MethodDeclarationSyntax method)
@@ -237,9 +246,10 @@ public static class MethodAnalysisExcelWriter
             result.Summaries.Select(summary => new[] { summary.FunctionName, summary.SummaryComment }),
             secondColumnWidth: 80));
         WriteEntry(archive, "xl/worksheets/sheet2.xml", CreateWorksheetXml(
-            new[] { "関数名", "仮引数名" },
-            result.Parameters.Select(parameter => new[] { parameter.FunctionName, parameter.ParameterName }),
-            secondColumnWidth: 28));
+            new[] { "関数名", "区分", "詳細" },
+            result.Details.Select(detail => new[] { detail.FunctionName, detail.Category, detail.Detail }),
+            secondColumnWidth: 18,
+            thirdColumnWidth: 36));
     }
 
     private static void WriteEntry(ZipArchive archive, string path, string content)
@@ -305,12 +315,18 @@ public static class MethodAnalysisExcelWriter
         </styleSheet>
         """;
 
-    private static string CreateWorksheetXml(IReadOnlyList<string> headers, IEnumerable<IReadOnlyList<string>> rows, double secondColumnWidth)
+    private static string CreateWorksheetXml(IReadOnlyList<string> headers, IEnumerable<IReadOnlyList<string>> rows, double secondColumnWidth, double? thirdColumnWidth = null)
     {
         var builder = new StringBuilder();
         builder.AppendLine("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>""");
         builder.AppendLine("""<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">""");
-        builder.AppendLine($"""  <cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="{secondColumnWidth}" customWidth="1"/></cols>""");
+        builder.Append($"""  <cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="{secondColumnWidth}" customWidth="1"/>""");
+        if (thirdColumnWidth is not null)
+        {
+            builder.Append($"""<col min="3" max="3" width="{thirdColumnWidth.Value}" customWidth="1"/>""");
+        }
+
+        builder.AppendLine("""</cols>""");
         builder.AppendLine("""  <sheetData>""");
         WriteRow(builder, 1, headers, styleIndex: 1);
 
@@ -415,13 +431,15 @@ public sealed class MainForm : Form
     private readonly TextBox _summaryFunctionNamesTextBox = new();
     private readonly TextBox _summaryCommentsTextBox = new();
     private readonly TextBox _parameterFunctionNamesTextBox = new();
-    private readonly TextBox _parameterNamesTextBox = new();
+    private readonly TextBox _parameterCategoriesTextBox = new();
+    private readonly TextBox _parameterDetailsTextBox = new();
     private readonly Label _statusLabel = new();
     private readonly Button _copySummaryFunctionNamesButton = new();
     private readonly Button _copySummaryCommentsButton = new();
     private readonly Button _copyParameterFunctionNamesButton = new();
-    private readonly Button _copyParameterNamesButton = new();
-    private MethodAnalysisResult _currentResult = new(Array.Empty<MethodSummary>(), Array.Empty<MethodParameter>());
+    private readonly Button _copyParameterCategoriesButton = new();
+    private readonly Button _copyParameterDetailsButton = new();
+    private MethodAnalysisResult _currentResult = new(Array.Empty<MethodSummary>(), Array.Empty<MethodDetail>());
 
     public MainForm()
     {
@@ -429,7 +447,7 @@ public sealed class MainForm : Form
         MinimumSize = new Size(900, 600);
         StartPosition = FormStartPosition.CenterScreen;
         InitializeLayout();
-        UpdatePreview(new MethodAnalysisResult(Array.Empty<MethodSummary>(), Array.Empty<MethodParameter>()));
+        UpdatePreview(new MethodAnalysisResult(Array.Empty<MethodSummary>(), Array.Empty<MethodDetail>()));
         SetStatus("解析対象の C# ファイルを選択してください。");
     }
 
@@ -485,7 +503,7 @@ public sealed class MainForm : Form
         var summaryTab = new TabPage("Summary");
         summaryTab.Controls.Add(CreateColumnPreviewPanel("関数名", _summaryFunctionNamesTextBox, _copySummaryFunctionNamesButton, CopySummaryFunctionNamesButton_Click, "Summaryコメント", _summaryCommentsTextBox, _copySummaryCommentsButton, CopySummaryCommentsButton_Click));
         var parametersTab = new TabPage("Parameters");
-        parametersTab.Controls.Add(CreateColumnPreviewPanel("関数名", _parameterFunctionNamesTextBox, _copyParameterFunctionNamesButton, CopyParameterFunctionNamesButton_Click, "仮引数名", _parameterNamesTextBox, _copyParameterNamesButton, CopyParameterNamesButton_Click));
+        parametersTab.Controls.Add(CreateThreeColumnPreviewPanel("関数名", _parameterFunctionNamesTextBox, _copyParameterFunctionNamesButton, CopyParameterFunctionNamesButton_Click, "区分", _parameterCategoriesTextBox, _copyParameterCategoriesButton, CopyParameterCategoriesButton_Click, "詳細", _parameterDetailsTextBox, _copyParameterDetailsButton, CopyParameterDetailsButton_Click));
         tabs.TabPages.Add(summaryTab);
         tabs.TabPages.Add(parametersTab);
         return tabs;
@@ -504,6 +522,26 @@ public sealed class MainForm : Form
         ConfigurePreviewTextBox(rightTextBox);
         panel.Controls.Add(leftTextBox, 0, 1);
         panel.Controls.Add(rightTextBox, 1, 1);
+        return panel;
+    }
+
+    private static Control CreateThreeColumnPreviewPanel(string leftLabel, TextBox leftTextBox, Button leftCopyButton, EventHandler leftCopyHandler, string centerLabel, TextBox centerTextBox, Button centerCopyButton, EventHandler centerCopyHandler, string rightLabel, TextBox rightTextBox, Button rightCopyButton, EventHandler rightCopyHandler)
+    {
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2, Padding = new Padding(8) };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44));
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        panel.Controls.Add(CreatePreviewHeader(leftLabel, leftCopyButton, leftCopyHandler), 0, 0);
+        panel.Controls.Add(CreatePreviewHeader(centerLabel, centerCopyButton, centerCopyHandler), 1, 0);
+        panel.Controls.Add(CreatePreviewHeader(rightLabel, rightCopyButton, rightCopyHandler), 2, 0);
+        ConfigurePreviewTextBox(leftTextBox);
+        ConfigurePreviewTextBox(centerTextBox);
+        ConfigurePreviewTextBox(rightTextBox);
+        panel.Controls.Add(leftTextBox, 0, 1);
+        panel.Controls.Add(centerTextBox, 1, 1);
+        panel.Controls.Add(rightTextBox, 2, 1);
         return panel;
     }
 
@@ -586,7 +624,7 @@ public sealed class MainForm : Form
 
             var excelPath = EnsureExcelPath();
             MethodAnalysisExcelWriter.WriteToFile(excelPath, _currentResult);
-            SetStatus($"{_currentResult.Summaries.Count} 件のメソッド、{_currentResult.Parameters.Count} 件の仮引数をExcel出力しました。");
+            SetStatus($"{_currentResult.Summaries.Count} 件のメソッド、{_currentResult.Details.Count} 件のParameters行をExcel出力しました。");
         }
         catch (Exception ex)
         {
@@ -616,7 +654,7 @@ public sealed class MainForm : Form
                 _excelFileTextBox.Text = CreateDefaultExcelPath(sourcePath);
             }
 
-            SetStatus($"{result.Summaries.Count} 件のメソッド、{result.Parameters.Count} 件の仮引数を解析しました。");
+            SetStatus($"{result.Summaries.Count} 件のメソッド、{result.Details.Count} 件のParameters行を解析しました。");
             return true;
         }
         catch (Exception ex)
@@ -631,12 +669,14 @@ public sealed class MainForm : Form
         _currentResult = result;
         _summaryFunctionNamesTextBox.Text = string.Join(Environment.NewLine, result.Summaries.Select(summary => summary.FunctionName));
         _summaryCommentsTextBox.Text = string.Join(Environment.NewLine, result.Summaries.Select(summary => summary.SummaryComment));
-        _parameterFunctionNamesTextBox.Text = string.Join(Environment.NewLine, result.Parameters.Select(parameter => parameter.FunctionName));
-        _parameterNamesTextBox.Text = string.Join(Environment.NewLine, result.Parameters.Select(parameter => parameter.ParameterName));
+        _parameterFunctionNamesTextBox.Text = string.Join(Environment.NewLine, result.Details.Select(detail => detail.FunctionName));
+        _parameterCategoriesTextBox.Text = string.Join(Environment.NewLine, result.Details.Select(detail => detail.Category));
+        _parameterDetailsTextBox.Text = string.Join(Environment.NewLine, result.Details.Select(detail => detail.Detail));
         _copySummaryFunctionNamesButton.Enabled = result.Summaries.Count > 0;
         _copySummaryCommentsButton.Enabled = result.Summaries.Count > 0;
-        _copyParameterFunctionNamesButton.Enabled = result.Parameters.Count > 0;
-        _copyParameterNamesButton.Enabled = result.Parameters.Count > 0;
+        _copyParameterFunctionNamesButton.Enabled = result.Details.Count > 0;
+        _copyParameterCategoriesButton.Enabled = result.Details.Count > 0;
+        _copyParameterDetailsButton.Enabled = result.Details.Count > 0;
     }
 
     private string EnsureExcelPath()
@@ -684,7 +724,9 @@ public sealed class MainForm : Form
 
     private void CopyParameterFunctionNamesButton_Click(object? sender, EventArgs e) => CopyText(_parameterFunctionNamesTextBox.Text, "Parametersシートの関数名をコピーしました。");
 
-    private void CopyParameterNamesButton_Click(object? sender, EventArgs e) => CopyText(_parameterNamesTextBox.Text, "仮引数名をコピーしました。");
+    private void CopyParameterCategoriesButton_Click(object? sender, EventArgs e) => CopyText(_parameterCategoriesTextBox.Text, "区分をコピーしました。");
+
+    private void CopyParameterDetailsButton_Click(object? sender, EventArgs e) => CopyText(_parameterDetailsTextBox.Text, "詳細をコピーしました。");
 
     private void CopyText(string text, string successMessage)
     {

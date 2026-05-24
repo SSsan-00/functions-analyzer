@@ -44,13 +44,22 @@ public static class CSharpMethodSummaryExtractor
                 ExtractSummaryComment(method)))
             .ToList();
 
-        var parameters = methods
-            .SelectMany(method => method.ParameterList.Parameters.Select(parameter => new MethodParameter(
-                method.Identifier.ValueText,
-                parameter.Identifier.ValueText)))
+        var details = methods
+            .SelectMany(ExtractDetails)
             .ToList();
 
-        return new MethodAnalysisResult(summaries, parameters);
+        return new MethodAnalysisResult(summaries, details);
+    }
+
+    private static IEnumerable<MethodDetail> ExtractDetails(MethodDeclarationSyntax method)
+    {
+        var functionName = method.Identifier.ValueText;
+        foreach (var parameter in method.ParameterList.Parameters)
+        {
+            yield return new MethodDetail(functionName, "引数", parameter.Identifier.ValueText);
+        }
+
+        yield return new MethodDetail(functionName, "戻り値", method.ReturnType.ToString());
     }
 
     private static string ExtractSummaryComment(MethodDeclarationSyntax method)
