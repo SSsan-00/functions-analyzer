@@ -7,6 +7,11 @@ param(
 $ErrorActionPreference = "Stop"
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 
+# NOTE:
+# Run this script as a .ps1 file saved on disk (do not paste line-by-line into the console).
+# Here-string terminators ('@) must be at column 1; if indentation is added during copy/paste,
+# parse errors such as "< は今後のために予約されています" can occur.
+
 function Write-SourceFile {
     param(
         [Parameter(Mandatory = $true)]
