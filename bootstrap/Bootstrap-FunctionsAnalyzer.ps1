@@ -7,6 +7,11 @@ param(
 $ErrorActionPreference = "Stop"
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 
+# NOTE:
+# This script relies on PowerShell here-strings. If copied manually from chat/markdown,
+# delimiters can break and cause parse errors such as "< は今後のために予約されています".
+# Prefer distributing this .ps1 file directly without manual copy/paste.
+
 function Write-SourceFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -21,7 +26,7 @@ function Write-SourceFile {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
 
-    Set-Content -LiteralPath $path -Value $Content -Encoding UTF8
+    Set-Content -LiteralPath $path -Value $Content -Encoding utf8BOM
 }
 
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
