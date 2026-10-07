@@ -58,6 +58,8 @@ Write-SourceFile "README.md" @'
 
 WinFormsで操作するC#ソース解析ツールです。選択した `.cs` ファイル内の通常のメソッド定義をRoslyn ASTで解析し、メソッド名、Summaryコメント、仮引数名、戻り値の型をExcelブックに出力します。
 
+文字コードはBOMを優先し、BOMなしではUTF-8、読み取れなければShift-JIS（CP932）として自動判定します。両方で解釈できる場合はUTF-8を優先し、不正なバイト列はエラーにします。
+
 ## 必要環境
 
 - .NET 9 SDK
@@ -129,7 +131,42 @@ public static class CSharpMethodSummaryExtractor
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
-        return AnalyzeSource(File.ReadAllText(filePath, Encoding.UTF8));
+        return AnalyzeSource(ReadSourceFile(filePath));
+    }
+
+    private static string ReadSourceFile(string filePath)
+    {
+        var bytes = File.ReadAllBytes(filePath);
+        var utf8 = new UTF8Encoding(false, true);
+        // Check UTF-32 before UTF-16 because their little-endian BOMs overlap.
+        Encoding[] bomEncodings =
+        [
+            new UTF32Encoding(false, true, true),
+            new UTF32Encoding(true, true, true),
+            new UnicodeEncoding(false, true, true),
+            new UnicodeEncoding(true, true, true),
+            new UTF8Encoding(true, true)
+        ];
+        foreach (var encoding in bomEncodings)
+        {
+            var bom = encoding.GetPreamble();
+            if (bytes.AsSpan().StartsWith(bom))
+            {
+                return encoding.GetString(bytes, bom.Length, bytes.Length - bom.Length);
+            }
+        }
+
+        // ponytail: ambiguous BOM-less bytes prefer UTF-8; add manual selection if needed.
+        try
+        {
+            return utf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            var shiftJis = CodePagesEncodingProvider.Instance.GetEncoding(
+                932, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)!;
+            return shiftJis.GetString(bytes);
+        }
     }
 
     public static MethodAnalysisResult AnalyzeSource(string source)

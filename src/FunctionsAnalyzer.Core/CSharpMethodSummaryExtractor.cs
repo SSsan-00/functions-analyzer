@@ -24,7 +24,42 @@ public static class CSharpMethodSummaryExtractor
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
-        return AnalyzeSource(File.ReadAllText(filePath, Encoding.UTF8));
+        return AnalyzeSource(ReadSourceFile(filePath));
+    }
+
+    private static string ReadSourceFile(string filePath)
+    {
+        var bytes = File.ReadAllBytes(filePath);
+        var utf8 = new UTF8Encoding(false, true);
+        // Check UTF-32 before UTF-16 because their little-endian BOMs overlap.
+        Encoding[] bomEncodings =
+        [
+            new UTF32Encoding(false, true, true),
+            new UTF32Encoding(true, true, true),
+            new UnicodeEncoding(false, true, true),
+            new UnicodeEncoding(true, true, true),
+            new UTF8Encoding(true, true)
+        ];
+        foreach (var encoding in bomEncodings)
+        {
+            var bom = encoding.GetPreamble();
+            if (bytes.AsSpan().StartsWith(bom))
+            {
+                return encoding.GetString(bytes, bom.Length, bytes.Length - bom.Length);
+            }
+        }
+
+        // ponytail: ambiguous BOM-less bytes prefer UTF-8; add manual selection if needed.
+        try
+        {
+            return utf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            var shiftJis = CodePagesEncodingProvider.Instance.GetEncoding(
+                932, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)!;
+            return shiftJis.GetString(bytes);
+        }
     }
 
     public static MethodAnalysisResult AnalyzeSource(string source)
